@@ -1,0 +1,70 @@
+name: Release
+
+on:
+  workflow_call:
+    inputs:
+      dry-run:
+        description: 'Compiles the app but not upload artifacts to distribution server'
+        default: false
+        required: false
+        type: boolean
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: 'bash'
+
+jobs:
+  draft_release:
+    permissions:
+      contents: write # Allows this job to create releases
+
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ windows-latest ]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v2 # Updated to use the latest stable version
+        with:
+          lfs: true # Enable Git LFS
+
+      - name: Set up Git LFS
+        run: |
+          git lfs install
+          git lfs pull
+
+      - uses: actions/setup-node@v3
+        with:
+          cache: 'npm'
+
+      - run: npm ci
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
+
+      - name: Create .env.production.local file
+        run: |
+          # 创建 .env.production.local 文件
+          echo "VITE_APP_API=${{ secrets.VITE_APP_API }}" > .env.production.local
+          echo "VITE_START_PAGE_URL=${{ secrets.VITE_START_PAGE_URL }}" >> .env.production.local
+          # 在这里添加任何其他需要的环境变量
+
+      - run: npm run build
+
+      - name: Compile artifacts ${{ inputs.dry-run && '' || 'and upload them to github release' }}
+        uses: nick-fields/retry@v2
+        with:
+          timeout_minutes: 15
+          max_attempts: 6
+          retry_wait_seconds: 15
+          retry_on: error
+          shell: 'bash'
+          command: ./node_modules/.bin/electron-builder --config .electron-builder.config.js --publish ${{ inputs.dry-run && 'never' || 'always' }}
+        env:
+          GH_TOKEN: ${{ secrets.github_token }} # GitHub token, automatically provided (No need to define this secret in the repo settings)
+          # Add any other environment variables that are specific to this step, if necessary
